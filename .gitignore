@@ -7,3 +7,4 @@ images-generation/training_results
 */__pycache__
 mlruns
 mlflow.db
+.vscode
