@@ -4,8 +4,8 @@ import nibabel as nib
 import numpy as np
 import os
 
-# Constants
-BASE_PATH = "data\PanTS"
+# Constants 
+BASE_PATH = r"mirp-radiomics-extraction\data\PanTS"
 PATIENTS_FOLDER_BASE_PATH = os.path.join(BASE_PATH, "Extracted")    # full path that contains the patients
 SEGMENTATION_FOLDER_BASE_PATH = os.path.join(BASE_PATH, "Labels Extracted") # full path that contains the segmentations for each patient
 
@@ -35,7 +35,7 @@ patients = os.listdir(path=PATIENTS_FOLDER_BASE_PATH)   # list of patients
 targets = {'pancreas.nii.gz', 'liver.nii.gz'}
 results = []
 
-for patient in patients[:1]:
+for patient in patients[:25]:
     patient_id = patient.split("_")[1]
     patient_full_path = os.path.join(PATIENTS_FOLDER_BASE_PATH, patient)  # single patient full path folder
     patient_folder = os.listdir(patient_full_path)  # single patient folder data
