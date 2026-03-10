@@ -1,6 +1,7 @@
 mirp-radiomics-extraction/*.csv
 mirp-radiomics-extraction/test_notebook.ipynb
 data
+augmented_data
 images-generation/models
 images-generation/results
 images-generation/training_results
@@ -8,3 +9,4 @@ images-generation/training_results
 mlruns
 mlflow.db
 .vscode
+.idea/

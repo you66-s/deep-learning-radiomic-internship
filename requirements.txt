@@ -6,3 +6,4 @@ pyvista
 scipy
 napari
 vedo
+mirp
