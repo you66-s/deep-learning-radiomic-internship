@@ -10,3 +10,4 @@ mlruns
 mlflow.db
 .vscode
 .idea/
+.env

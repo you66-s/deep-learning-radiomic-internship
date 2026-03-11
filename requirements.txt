@@ -7,3 +7,4 @@ scipy
 napari
 vedo
 mirp
+dotenv
