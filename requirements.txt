@@ -8,3 +8,8 @@ napari
 vedo
 mirp
 dotenv
+scikit-learn
+torch
+torchvision
+pandas
+wandb

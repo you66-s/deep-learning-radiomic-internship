@@ -5,9 +5,11 @@ augmented_data
 images-generation/models
 images-generation/results
 images-generation/training_results
+mirp-radiomics-extraction/cleaning_generated_dataset.ipynb
 */__pycache__
 mlruns
 mlflow.db
 .vscode
 .idea/
 .env
+wandb
