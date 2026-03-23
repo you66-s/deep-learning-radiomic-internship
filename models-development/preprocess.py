@@ -1,19 +1,19 @@
 # preprocess.py
 import os, logging
+from pathlib import Path
 import numpy as np
 import nibabel as nib
 import torch
 import pandas as pd
-from pathlib import Path
+
 from tqdm import tqdm
 import multiprocessing as mp
-from functools import partial
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
 TARGET_SHAPE = (128, 128)
-CACHE_DIR = Path(f"../data/processed_tensors/{TARGET_SHAPE[0]}x{TARGET_SHAPE[1]}")
+CACHE_DIR = f"data/processed_tensors/{TARGET_SHAPE[0]}x{TARGET_SHAPE[1]}"
 MARGIN = 10
 
 def pad_volume(volume, target_shape):
@@ -37,7 +37,8 @@ def pad_volume(volume, target_shape):
 
 def process_one(args):
     idx, row, cache_dir, target_shape = args
-    out_path = Path(cache_dir) / f"sample_{idx}.pt"
+    cache_dir = Path(cache_dir)
+    out_path = cache_dir / f"sample_{idx}.pt"
 
     if out_path.exists():
         return idx, "skipped"
@@ -64,9 +65,26 @@ def process_one(args):
         ct_data   = ct_data[zmin:zmax, ymin:ymax, xmin:xmax]
         mask_data = mask_data[zmin:zmax, ymin:ymax, xmin:xmax]
 
-        x = np.stack([ct_data, mask_data], axis=0)
+        coords = np.where(mask_data > 0)
+        zmin_local, zmax_local = coords[0].min(), coords[0].max()
+        z_middle = (zmin_local + zmax_local) // 2
+
+        # Extract same slice as radiomics
+        ct_slice = ct_data[z_middle, :, :]
+        mask_slice = mask_data[z_middle, :, :]
+        mask_path = row["mask_path"]
+        if np.sum(mask_slice) == 0:
+            logger.warning(f"Empty slice after selection: {mask_path}")
+            return idx, "empty slice"
+        # Stack channels → (C, H, W)
+        x = np.stack([ct_slice, mask_slice], axis=0)
+        # Add fake depth dimension for padding function
+        x = np.expand_dims(x, axis=1)  # (C, 1, H, W)
+        # Pad
         x = pad_volume(x, target_shape)
-        x = x[:, x.shape[1] // 2, :, :]
+
+        # Remove depth dimension
+        x = x[:, 0, :, :]
 
         torch.save(torch.tensor(x, dtype=torch.float32), out_path)
         return idx, "ok"
@@ -75,12 +93,11 @@ def process_one(args):
         return idx, f"error: {e}"
 
 def preprocess_dataset(csv_path, num_workers=12):
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
     dataset = pd.read_csv(csv_path)
 
     # Prépare les arguments pour chaque worker
     args_list = [
-        (idx, row, str(CACHE_DIR), TARGET_SHAPE)
+        (idx, row, CACHE_DIR, TARGET_SHAPE)
         for idx, row in dataset.iterrows()
     ]
 
@@ -114,4 +131,4 @@ def preprocess_dataset(csv_path, num_workers=12):
 
 
 if __name__ == "__main__":
-    preprocess_dataset("../data/final_cleaned_dataset.csv")
+    preprocess_dataset("data/processed_dataset/final_2d_cleaned_dataset.csv")
