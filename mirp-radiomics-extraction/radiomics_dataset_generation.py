@@ -8,7 +8,7 @@ import nibabel as nib
 import numpy as np
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor
-import glob, psutil, gc, os, logging
+import glob, gc, os, logging
 load_dotenv()
 
 # Logging configuration (only warnings and errors)
@@ -62,36 +62,50 @@ def radiomics_features_extraction(image_path: str, mask_path: str, bins_num: int
     zmax = min(zmax + margin, mask_data.shape[0])
     ymax = min(ymax + margin, mask_data.shape[1])
     xmax = min(xmax + margin, mask_data.shape[2])
-
     img_data = img_data[zmin:zmax, ymin:ymax, xmin:xmax]
     mask_data = mask_data[zmin:zmax, ymin:ymax, xmin:xmax]
     
     print("Mask voxels after cropping:", np.sum(mask_data))
     
+    coords = np.where(mask_data > 0)
+    zmin, zmax = coords[0].min(), coords[0].max()
+    z_middle = (zmin + zmax) // 2
+    print(f"Selected middle slice: {z_middle}")
+
+    # Extract 2D slice
+    img_2d = img_data[z_middle, :, :]
+    mask_2d = mask_data[z_middle, :, :]
+
+    # Safety check (rare but important)
+    if np.sum(mask_2d) == 0:
+        logger.warning(f"Empty slice after selection: {mask_path}")
+        return None
+    
+    img_2d = np.expand_dims(img_2d, axis=0)  # shape becomes (1, H, W)
+    mask_2d = np.expand_dims(mask_2d, axis=0)
+    
     feature_data = extract_features(
-        image=img_data,
-        mask=mask_data,
+        image=img_2d,
+        mask=mask_2d,
         new_spacing=resample_dim,
         intensity_normalisation=normalisation_method,
         base_discretisation_method="fixed_bin_number",
         base_discretisation_n_bins=bins_num,
         settings=settings,
+        by_slice=False
     )
 
     del img, mask, img_data, mask_data
     gc.collect()
     return feature_data
-def log_memory():
-    process = psutil.Process(os.getpid())
-    mem = process.memory_info().rss / (1024 ** 3)
-    logger.warning(f"RAM used: {mem:.2f} GB")
+
 # Dataset Generation Pipeline
 patients = os.listdir(PATIENTS_FOLDER_BASE_PATH)
 targets = {"pancreas.nii.gz", "pancreas_body.nii.gz", "pancreas_head.nii.gz", 
            "pancreas_tail.nii.gz", "pancreatic_duct.nii.gz", "pancreatic_lesion.nii.gz"}
 
 with ProcessPoolExecutor(max_workers=1) as executor:
-    for patient in tqdm(patients, desc="Patients"):
+    for patient in tqdm(patients[:1], desc="Patients"):
         patient_id = patient.split("_")[1]
         patient_csv = os.path.join(OUTPUT_FOLDER, f"{patient_id}_radiomics_features.csv")
         # Skip if already processed
@@ -160,11 +174,9 @@ with ProcessPoolExecutor(max_workers=1) as executor:
         else:
             logger.warning(f"Augmented segmentation folder not found for {patient_id}")
          
-        logger.info(f"RAM usage after process is done:")
-        log_memory()
         gc.collect()
 
 
 files = glob.glob(os.path.join(OUTPUT_FOLDER, "*.csv"))
 df = pd.concat((pd.read_csv(f) for f in files), ignore_index=True)
-df.to_csv("full_radiomics_dataset.csv", index=False)
+df.to_csv("data/2d_full_radiomics_dataset.csv", index=False)
