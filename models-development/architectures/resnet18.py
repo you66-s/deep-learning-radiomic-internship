@@ -16,7 +16,9 @@ class ResNet18(nn.Module):
             padding=old_conv.padding, bias=False
         )
         with torch.no_grad():
-            self.backbone.conv1.weight.copy_(old_conv.weight[:, :in_channels])
+            self.backbone.conv1.weight = nn.Parameter(
+                old_conv.weight.mean(dim=1, keepdim=True).repeat(1, in_channels, 1, 1)
+            )
 
         # Unfreeze layer4 AND layer3
         for param in self.backbone.parameters():
@@ -30,7 +32,7 @@ class ResNet18(nn.Module):
             nn.Linear(512, 256),
             nn.BatchNorm1d(256),
             nn.ReLU(),
-            nn.Dropout(0.6),    
+            nn.Dropout(0.3),    
             nn.Linear(256, 128),
             nn.BatchNorm1d(128),
             nn.ReLU(),
