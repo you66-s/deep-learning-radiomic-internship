@@ -93,7 +93,7 @@ def train_model(model: torch.nn.Module, train_loader: torch.utils.data.DataLoade
             f"Epoch Time: {epoch_time:.2f}s"
         )
     
-    wandb.finish()
+    
     total_time = time.time() - total_start
     logger.info(f"Training finished in {total_time:.2f} seconds")
 
