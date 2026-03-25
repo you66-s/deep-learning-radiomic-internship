@@ -15,30 +15,26 @@ class ResNet18(nn.Module):
             kernel_size=old_conv.kernel_size, stride=old_conv.stride, 
             padding=old_conv.padding, bias=False
         )
+        
         with torch.no_grad():
-            self.backbone.conv1.weight = nn.Parameter(
-                old_conv.weight.mean(dim=1, keepdim=True).repeat(1, in_channels, 1, 1)
-            )
+            self.backbone.conv1.weight[:, 0:1, :, :] = old_conv.weight.mean(dim=1, keepdim=True)
+            nn.init.kaiming_normal_(self.backbone.conv1.weight[:, 1:2, :, :])
 
-        # Unfreeze layer4 AND layer3
+        # layers to train
         for param in self.backbone.parameters():
             param.requires_grad = False
-        for param in list(self.backbone.layer4.parameters()) + list(self.backbone.layer3.parameters()):
+        for param in self.backbone.conv1.parameters():
             param.requires_grad = True
 
         self.backbone.fc = nn.Identity()
 
         self.regressor = nn.Sequential(
             nn.Linear(512, 256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(),
-            nn.Dropout(0.3),    
+            nn.ReLU(),  
             nn.Linear(256, 128),
-            nn.BatchNorm1d(128),
             nn.ReLU(),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, num_outputs)
+            nn.Dropout(0.3),
+            nn.Linear(128, num_outputs)
         )
         
     def forward(self, x):
