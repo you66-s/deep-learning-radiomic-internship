@@ -2,6 +2,10 @@ import torch, time, logging
 from tqdm.auto import tqdm
 from typing import Dict, List
 import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+import pandas as pd
+from sklearn.metrics import r2_score
 import wandb
 
 logger = logging.getLogger(__name__)
@@ -75,7 +79,7 @@ def train_model(model: torch.nn.Module, train_loader: torch.utils.data.DataLoade
         })
         
         if scheduler is not None:
-            scheduler.step(val_loss)
+            scheduler.step()
             current_lr = optimizer.param_groups[0]['lr']
             logger.info(f"Epoch {epoch+1}: Current Learning Rate: {current_lr:.6f}")
             
@@ -89,7 +93,7 @@ def train_model(model: torch.nn.Module, train_loader: torch.utils.data.DataLoade
         print(
             f"Epoch {epoch+1}/{epochs} | "
             f"Train Loss: {train_loss:.4f} | "
-            f"Val Loss: {val_loss:.4f}"
+            f"Val Loss: {val_loss:.4f} "
             f"Epoch Time: {epoch_time:.2f}s"
         )
     
@@ -98,6 +102,48 @@ def train_model(model: torch.nn.Module, train_loader: torch.utils.data.DataLoade
     logger.info(f"Training finished in {total_time:.2f} seconds")
 
     return history
+
+def evaluate_and_plot(model, loader, target_names, device, run_name):
+    model.eval()
+    all_preds = []
+    all_labels = []
+    
+    logger.info("Final Evaluation: Running inference on Test Set...")
+    with torch.no_grad():
+        for x, y in loader:
+            x, y = x.to(device), y.to(device)
+            preds = model(x)
+            all_preds.append(preds.cpu().numpy())
+            all_labels.append(y.cpu().numpy())
+
+    y_pred = np.vstack(all_preds)
+    y_true = np.vstack(all_labels)
+
+    # Calculate R2 for every individual feature
+    r2_values = r2_score(y_true, y_pred, multioutput='raw_values')
+    
+    # Create results dataframe
+    results_df = pd.DataFrame({
+        'Feature': target_names,
+        'R2_Score': r2_values
+    }).sort_values(by='R2_Score', ascending=False)
+
+    # Print Report
+    print(f"\n--- Final Test Performance: {run_name} ---")
+    print(results_df.to_string(index=False))
+
+    # Generate Performance Graph
+    plt.figure(figsize=(12, 10))
+    sns.barplot(data=results_df, x='R2_Score', y='Feature', palette='viridis')
+    plt.axvline(x=0, color='red', linestyle='--', alpha=0.5) # Baseline
+    plt.axvline(x=0.8, color='green', linestyle=':', label='High Mastery (0.8)')
+    plt.title(f'R² Score per Radiomic Feature (Test Set)\nRun: {run_name}')
+    plt.xlabel('R² Score (Higher is Better)')
+    plt.tight_layout()
+    
+    plot_path = f"artifacts/plots/{run_name}_r2_report.png"
+    plt.savefig(plot_path)
+    return results_df, plt.gcf()
 
 
 def plot_loss_curves(results):
