@@ -10,7 +10,7 @@ from torchvision import transforms as T
 from architectures.resnet18 import ResNet18
 import torch.nn as nn
 import torch.optim as optim
-from training_engine import train_model, plot_loss_curves
+from training_engine import evaluate_and_plot, train_model, plot_loss_curves
 import numpy as np
 
 # Hyperparameters
@@ -23,8 +23,18 @@ RANDOM_SEED = 42
 np.random.seed(RANDOM_SEED)
 torch.manual_seed(RANDOM_SEED)
 # W&B parameters
-RUN_NAME = "resnet18-normalized-ct-values-cosine-lr-100ep"
-RUN_DESCRIPTION = "xtended training to 100 epochs with CosineAnnealingLR scheduler replacing ReduceLROnPlateau."
+RUN_NAME = f"resnet18-reduced-dropout-{EPOCHS}ep-last-exp"
+RUN_DESCRIPTION = "Extended to 100ep with reducing dropout effect, and last expr for the resnet18 architecture"   
+CONFIG = {
+        "learning_rate": LR,
+        "weight_decay": WEIGHT_DECAY,
+        "architecture": "ResNet18",
+        "dataset": "CT-Radiomics-2D-features",
+        "epochs": EPOCHS,
+        "train_batch_size": TRAIN_BATCH_SIZE,
+        "val_batch_size": VAL_BATCH_SIZE,
+        "description": RUN_DESCRIPTION
+    }
 
 # logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
@@ -41,56 +51,71 @@ dataset = dataset.dropna()
 
 target_cols = [c for c in dataset.columns if c.startswith("stat_")]
 
-unique_patients = dataset['patient_id'].unique()
-train_ids, val_ids = train_test_split(unique_patients, test_size=0.2, random_state=RANDOM_SEED)
-train_data = dataset[dataset['patient_id'].isin(train_ids)]
-val_data   = dataset[dataset['patient_id'].isin(val_ids)]
+unique_patients = dataset['patient_id'].unique()    
+train_ids, temp_ids = train_test_split(unique_patients, test_size=0.30, random_state=RANDOM_SEED)   # training set (70%)
+val_ids, test_ids = train_test_split(temp_ids, test_size=0.50, random_state=RANDOM_SEED)    # Val (15%) and Test (15%)
+train_df = dataset[dataset['patient_id'].isin(train_ids)].copy()
+val_df   = dataset[dataset['patient_id'].isin(val_ids)].copy()
+test_df  = dataset[dataset['patient_id'].isin(test_ids)].copy()
 
-train_data = train_data.drop(labels=['patient_id', 'mask_path', 'ct_image_path'], axis=1)
-val_data = val_data.drop(labels=['patient_id', 'mask_path', 'ct_image_path'], axis=1)
+cols_to_drop = ['patient_id', 'mask_path', 'ct_image_path']
+train_df = train_df.drop(labels=cols_to_drop, axis=1)
+val_df   = val_df.drop(labels=cols_to_drop, axis=1)
+test_df  = test_df.drop(labels=cols_to_drop, axis=1)
+
 # features normalization
 scaler = StandardScaler()
-train_data[target_cols] = scaler.fit_transform(train_data[target_cols])
-val_data[target_cols] = scaler.transform(val_data[target_cols])
+train_df[target_cols] = scaler.fit_transform(train_df[target_cols])
+val_df[target_cols]   = scaler.transform(val_df[target_cols])
+test_df[target_cols]  = scaler.transform(test_df[target_cols])
 
-print("train data example: ", train_data.iloc[10].values)
+tensor_path = "data/processed_tensors/128x128"
+train_dataset = RadiomicDataset(dataset=train_df, tensor_dir=tensor_path, is_train=True)
+val_dataset   = RadiomicDataset(dataset=val_df,   tensor_dir=tensor_path, is_train=False)
+test_dataset  = RadiomicDataset(dataset=test_df,  tensor_dir=tensor_path, is_train=False)
 
-train_dataset = RadiomicDataset(csv_dataset=train_data, tensor_dir="data/processed_tensors/128x128", is_train=True)
-val_dataset = RadiomicDataset(csv_dataset=val_data, tensor_dir="data/processed_tensors/128x128", is_train=False)
-
-logger.info("Creating DataLoaders")
 train_loader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True, drop_last=True)
-val_loader = DataLoader(val_dataset, batch_size=VAL_BATCH_SIZE, shuffle=False)
-logger.info("DataLoaders ready")
+val_loader   = DataLoader(val_dataset,   batch_size=VAL_BATCH_SIZE,   shuffle=False)
+test_loader  = DataLoader(test_dataset,  batch_size=VAL_BATCH_SIZE,   shuffle=False)
+logger.info(f"Dataloaders ready: Train={len(train_ids)} pts, Val={len(val_ids)} pts, Test={len(test_ids)} pts")
 
 num_radiomic_features = len([c for c in dataset.columns if c.startswith("stat_")])
 
-logger.info("Initializing ResNet18 model")
+
 model = ResNet18(num_outputs=num_radiomic_features, in_channels=2)
 
 
-loss_fn = nn.MSELoss()
+loss_fn = nn.HuberLoss()
 optimizer = optim.Adam(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
-scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=100, eta_min=1e-6)
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=EPOCHS, eta_min=1e-6)
 
 wandb.init(
     project="Encov-Internship",
     name=RUN_NAME,
-    config={
-        "learning_rate": LR,
-        "weight_decay": WEIGHT_DECAY,
-        "architecture": "ResNet18",
-        "dataset": "CT-Radiomics-2D-features",
-        "epochs": EPOCHS,
-        "train_batch_size": TRAIN_BATCH_SIZE,
-        "val_batch_size": VAL_BATCH_SIZE,
-        "description": RUN_DESCRIPTION
-    }
+    config=CONFIG
 )
 logger.info("Starting training...")
-history = train_model(model, train_loader, val_loader, optimizer, loss_fn, epochs=EPOCHS, device=device)
+history = train_model(model, train_loader, val_loader, optimizer, loss_fn, epochs=EPOCHS, device=device, scheduler=scheduler)
+
+model_path = f"artifacts/saved-models/{RUN_NAME}.pth"
+torch.save(model.state_dict(), model_path)
+
+test_results, fig_eval = evaluate_and_plot(model, test_loader, target_cols, device, RUN_NAME)
+
+wandb.log({
+    "test_r2_report": wandb.Image(fig_eval),
+    "mean_test_r2": test_results['R2_Score'].mean()
+})
 
 fig = plot_loss_curves(history)
 
+artifact = wandb.Artifact(
+    name=RUN_NAME,
+    type="model",
+    description=RUN_DESCRIPTION,
+    metadata=CONFIG
+)
+artifact.add_file(model_path)
+wandb.log_artifact(artifact)
 
 wandb.finish()
