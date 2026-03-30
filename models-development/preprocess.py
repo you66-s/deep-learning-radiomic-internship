@@ -5,15 +5,14 @@ import numpy as np
 import nibabel as nib
 import torch
 import pandas as pd
-
 from tqdm import tqdm
 import multiprocessing as mp
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
-TARGET_SHAPE = (128, 128)
-CACHE_DIR = f"data/processed_tensors/{TARGET_SHAPE[0]}x{TARGET_SHAPE[1]}"
+TARGET_SHAPE = (128, 128) 
+CACHE_DIR = f"data/processed_tensors/{TARGET_SHAPE[0]}x{TARGET_SHAPE[1]}_5_slices"      # data/processed_tensors/128x128_5_slices
 MARGIN = 10
 
 def pad_volume(volume, target_shape):
@@ -68,16 +67,22 @@ def process_one(args):
         coords = np.where(mask_data > 0)
         zmin_local, zmax_local = coords[0].min(), coords[0].max()
         z_middle = (zmin_local + zmax_local) // 2
+        
+        # Extract 3 contiguous slices
+        z_indices = [z_middle - 1, z_middle, z_middle + 1]
+        z_indices = [np.clip(z, 0, ct_data.shape[0] - 1) for z in z_indices]    # clip to handle cases where the ROI is only 1 or 2 slices thick
 
         # Extract same slice as radiomics
-        ct_slice = ct_data[z_middle, :, :]
-        mask_slice = mask_data[z_middle, :, :]
-        mask_path = row["mask_path"]
-        if np.sum(mask_slice) == 0:
-            logger.warning(f"Empty slice after selection: {mask_path}")
+        ct_slice = ct_data[z_indices, :, :]
+        mask_slice = mask_data[z_indices, :, :]
+
+        if np.sum(mask_slice[1]) == 0:
+            logger.warning(f"Empty slice after selection")
             return idx, "empty slice"
+        
+        
         # Stack channels → (C, H, W)
-        x = np.stack([ct_slice, mask_slice], axis=0)
+        x = np.concatenate([ct_slice, mask_slice], axis=0)
         # Add fake depth dimension for padding function
         x = np.expand_dims(x, axis=1)  # (C, 1, H, W)
         # Pad
