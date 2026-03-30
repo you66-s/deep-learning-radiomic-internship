@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 import pandas as pd
+from sklearn.preprocessing import RobustScaler
 from sklearn.metrics import r2_score
 import wandb
 
@@ -145,9 +146,7 @@ def evaluate_and_plot(model, loader, target_names, device, run_name):
     plt.savefig(plot_path)
     return results_df, plt.gcf()
 
-
 def plot_loss_curves(results):
-
     train_loss = results["train_loss"]
     val_loss = results["val_loss"]
     epochs = range(1, len(train_loss)+1)
@@ -161,3 +160,15 @@ def plot_loss_curves(results):
     plt.legend()
     plt.grid(True)
     plt.show()
+    
+def apply_custom_scaling(log_features, target_cols, dataset, is_train=True, scaler=None):
+    dataset = dataset.copy()
+    dataset[log_features] = dataset[log_features].clip(lower=1e-10)
+    dataset[log_features] = np.log1p(dataset[log_features])
+    if is_train:
+        scaler = RobustScaler()
+        dataset[target_cols] = scaler.fit_transform(dataset[target_cols])
+        return dataset, scaler
+    else:
+        dataset[target_cols] = scaler.transform(dataset[target_cols])
+        return dataset
