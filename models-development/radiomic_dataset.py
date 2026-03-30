@@ -14,11 +14,12 @@ class RadiomicDataset(Dataset):
         self.is_train = is_train
         self.transforms = T.Compose([
             T.RandomHorizontalFlip(p=0.5),
-            T.RandomVerticalFlip(p=0.5),
+            T.RandomVerticalFlip(p=0.5)
         ])
         
     def __len__(self):
         return len(self.dataset)
+
 
     def __getitem__(self, index):
         original_idx = self.dataset.iloc[index]['index']
@@ -27,8 +28,8 @@ class RadiomicDataset(Dataset):
         x = torch.load(tensor_path)
         # Normalizing HU values
         HU_MIN, HU_MAX = -150.0, 250.0
-        x[0] = torch.clamp(x[0], HU_MIN, HU_MAX)
-        x[0] = (x[0] - HU_MIN) / (HU_MAX - HU_MIN) # min max normalization for training
+        x[:3] = torch.clamp(x[:3], HU_MIN, HU_MAX)
+        x[:3] = (x[:3] - HU_MIN) / (HU_MAX - HU_MIN) # min max normalization for training
         if self.is_train:
             x = self.transforms(x)
         y = self.dataset.iloc[index][self.target_cols].values.astype(np.float32)
