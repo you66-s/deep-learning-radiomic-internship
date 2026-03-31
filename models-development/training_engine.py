@@ -173,54 +173,57 @@ def apply_custom_scaling(log_features, target_cols, dataset, is_train=True, scal
         dataset[target_cols] = scaler.transform(dataset[target_cols])
         return dataset
     
-def custom_scaling_v2(dataset: pd.DataFrame,target_cols: list, log_features: list, ratio_features: list, is_train: bool, scaler: dict | None = None) -> tuple[pd.DataFrame, dict | None]:
-    """
-    Three-group scaling strategy:
-      - ratio features  -> RobustScaler only
-      - log features    -> log1p, then RobustScaler
-      - rest            -> RobustScaler
- 
-    Returns (scaled_df, scaler_dict) for train, (scaled_df, None) for val/test.
-    """
+def custom_scaling_v2(dataset, target_cols, log_features, ratio_features, is_train, scaler=None):
     df = dataset.copy()
- 
-    # Separate features that exist in the dataframe
+
     ratio_cols = [c for c in ratio_features if c in target_cols]
     log_cols   = [c for c in log_features   if c in target_cols]
     rest_cols  = [c for c in target_cols if c not in ratio_cols and c not in log_cols]
- 
+
     if is_train:
         scaler = {}
- 
-        # Ratio group — RobustScaler only
+
+        # Ratio group, clip extreme outliers, then RobustScaler
         if ratio_cols:
+            # Compute clip bounds from training data only
+            clip_bounds = {}
+            for col in ratio_cols:
+                low  = df[col].quantile(0.01)
+                high = df[col].quantile(0.99)
+                clip_bounds[col] = (low, high)
+                df[col] = df[col].clip(low, high)
+            
             sc = RobustScaler()
             df[ratio_cols] = sc.fit_transform(df[ratio_cols])
-            scaler["ratio"] = (sc, ratio_cols, False)   # (scaler, cols, log_transform)
- 
-        # Log group — log1p then RobustScaler
+            scaler["ratio"] = (sc, ratio_cols, False, clip_bounds)  # store bounds
+
+        # Log group log1p then RobustScaler
         if log_cols:
             df[log_cols] = np.log1p(df[log_cols].clip(lower=0))
             sc = RobustScaler()
             df[log_cols] = sc.fit_transform(df[log_cols])
-            scaler["log"] = (sc, log_cols, True)
- 
+            scaler["log"] = (sc, log_cols, True, None)
+
         # Rest group — RobustScaler only
         if rest_cols:
             sc = RobustScaler()
             df[rest_cols] = sc.fit_transform(df[rest_cols])
-            scaler["rest"] = (sc, rest_cols, False)
- 
+            scaler["rest"] = (sc, rest_cols, False, None)
+
         return df, scaler
- 
+
     else:
-        assert scaler is not None, "scaler must be provided for val/test"
- 
-        for key, (sc, cols, do_log) in scaler.items():
+        assert scaler is not None
+        for key, (sc, cols, do_log, clip_bounds) in scaler.items():
             valid = [c for c in cols if c in df.columns]
+            # Apply same clip bounds from training
+            if clip_bounds is not None:
+                for col in valid:
+                    if col in clip_bounds:
+                        low, high = clip_bounds[col]
+                        df[col] = df[col].clip(low, high)
             if do_log:
                 df[valid] = np.log1p(df[valid].clip(lower=0))
             df[valid] = sc.transform(df[valid])
- 
+
         return df, None
- 
