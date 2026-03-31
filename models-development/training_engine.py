@@ -172,3 +172,55 @@ def apply_custom_scaling(log_features, target_cols, dataset, is_train=True, scal
     else:
         dataset[target_cols] = scaler.transform(dataset[target_cols])
         return dataset
+    
+def custom_scaling_v2(dataset: pd.DataFrame,target_cols: list, log_features: list, ratio_features: list, is_train: bool, scaler: dict | None = None) -> tuple[pd.DataFrame, dict | None]:
+    """
+    Three-group scaling strategy:
+      - ratio features  -> RobustScaler only
+      - log features    -> log1p, then RobustScaler
+      - rest            -> RobustScaler
+ 
+    Returns (scaled_df, scaler_dict) for train, (scaled_df, None) for val/test.
+    """
+    df = dataset.copy()
+ 
+    # Separate features that exist in the dataframe
+    ratio_cols = [c for c in ratio_features if c in target_cols]
+    log_cols   = [c for c in log_features   if c in target_cols]
+    rest_cols  = [c for c in target_cols if c not in ratio_cols and c not in log_cols]
+ 
+    if is_train:
+        scaler = {}
+ 
+        # Ratio group — RobustScaler only
+        if ratio_cols:
+            sc = RobustScaler()
+            df[ratio_cols] = sc.fit_transform(df[ratio_cols])
+            scaler["ratio"] = (sc, ratio_cols, False)   # (scaler, cols, log_transform)
+ 
+        # Log group — log1p then RobustScaler
+        if log_cols:
+            df[log_cols] = np.log1p(df[log_cols].clip(lower=0))
+            sc = RobustScaler()
+            df[log_cols] = sc.fit_transform(df[log_cols])
+            scaler["log"] = (sc, log_cols, True)
+ 
+        # Rest group — RobustScaler only
+        if rest_cols:
+            sc = RobustScaler()
+            df[rest_cols] = sc.fit_transform(df[rest_cols])
+            scaler["rest"] = (sc, rest_cols, False)
+ 
+        return df, scaler
+ 
+    else:
+        assert scaler is not None, "scaler must be provided for val/test"
+ 
+        for key, (sc, cols, do_log) in scaler.items():
+            valid = [c for c in cols if c in df.columns]
+            if do_log:
+                df[valid] = np.log1p(df[valid].clip(lower=0))
+            df[valid] = sc.transform(df[valid])
+ 
+        return df, None
+ 
