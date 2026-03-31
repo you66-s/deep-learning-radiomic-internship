@@ -7,29 +7,29 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader
 from torchvision import transforms as T
-from architectures.resnet18 import ResNet18
+from architectures.resnet18 import ResNet18, WeightedHuberLoss
 import torch.nn as nn
 import torch.optim as optim
-from training_engine import evaluate_and_plot, train_model, plot_loss_curves
+from training_engine import evaluate_and_plot, train_model, plot_loss_curves, custom_scaling_v2
 import numpy as np
 
 # Hyperparameters
-LR = 1e-4
-WEIGHT_DECAY = 1e-4
-EPOCHS = 100
-TRAIN_BATCH_SIZE = 32
-VAL_BATCH_SIZE = 32
+LR = 2e-4
+WEIGHT_DECAY = 1e-3
+EPOCHS = 80
+TRAIN_BATCH_SIZE = 128
+VAL_BATCH_SIZE = 128
 RANDOM_SEED = 42
 np.random.seed(RANDOM_SEED)
 torch.manual_seed(RANDOM_SEED)
 # W&B parameters
-RUN_NAME = f"resnet18-reduced-dropout-{EPOCHS}ep-last-exp"
-RUN_DESCRIPTION = "Extended to 100ep with reducing dropout effect, and last expr for the resnet18 architecture"   
+RUN_NAME = f"resnet18-wider-hu-window-{EPOCHS}ep"
+RUN_DESCRIPTION = "Wider HU window [-200, 500] and stat_max moved to LOG_FEATURES group."   
 CONFIG = {
         "learning_rate": LR,
         "weight_decay": WEIGHT_DECAY,
         "architecture": "ResNet18",
-        "dataset": "CT-Radiomics-2D-features",
+        "dataset": "CT-Radiomics-2D-features-old",
         "epochs": EPOCHS,
         "train_batch_size": TRAIN_BATCH_SIZE,
         "val_batch_size": VAL_BATCH_SIZE,
@@ -63,13 +63,14 @@ train_df = train_df.drop(labels=cols_to_drop, axis=1)
 val_df   = val_df.drop(labels=cols_to_drop, axis=1)
 test_df  = test_df.drop(labels=cols_to_drop, axis=1)
 
-# features normalization
-scaler = StandardScaler()
-train_df[target_cols] = scaler.fit_transform(train_df[target_cols])
-val_df[target_cols]   = scaler.transform(val_df[target_cols])
-test_df[target_cols]  = scaler.transform(test_df[target_cols])
+RATIO_FEATURES = ["stat_qcod", "stat_cov", "stat_skew", "stat_kurt"]
+LOG_FEATURES   = ["stat_energy", "stat_var", "stat_range", "stat_iqr", "stat_mad", "stat_max"]
 
-tensor_path = "data/processed_tensors/128x128"
+train_df, scaler = custom_scaling_v2(train_df, target_cols, LOG_FEATURES, RATIO_FEATURES, is_train=True)
+val_df,  _       = custom_scaling_v2(val_df,   target_cols, LOG_FEATURES, RATIO_FEATURES, is_train=False, scaler=scaler)
+test_df, _       = custom_scaling_v2(test_df,  target_cols, LOG_FEATURES, RATIO_FEATURES, is_train=False, scaler=scaler)
+
+tensor_path = "data/processed_tensors/128x128_5_slices"
 train_dataset = RadiomicDataset(dataset=train_df, tensor_dir=tensor_path, is_train=True)
 val_dataset   = RadiomicDataset(dataset=val_df,   tensor_dir=tensor_path, is_train=False)
 test_dataset  = RadiomicDataset(dataset=test_df,  tensor_dir=tensor_path, is_train=False)
@@ -81,11 +82,10 @@ logger.info(f"Dataloaders ready: Train={len(train_ids)} pts, Val={len(val_ids)} 
 
 num_radiomic_features = len([c for c in dataset.columns if c.startswith("stat_")])
 
-
-model = ResNet18(num_outputs=num_radiomic_features, in_channels=2)
-
+model = ResNet18(num_outputs=num_radiomic_features, in_channels=6)
 
 loss_fn = nn.HuberLoss()
+
 optimizer = optim.Adam(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
 scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=EPOCHS, eta_min=1e-6)
 
