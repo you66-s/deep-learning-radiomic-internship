@@ -7,10 +7,10 @@ from torchvision import transforms as T
 logger = logging.getLogger(__name__)
 
 class RadiomicDataset(Dataset):
-    def __init__(self, tensor_dir: str, dataset: pd.DataFrame, is_train: bool = True):
+    def __init__(self, tensor_dir: str, dataset: pd.DataFrame, target_cols: list, is_train: bool = True):
         self.tensor_dir = tensor_dir
         self.dataset = dataset.reset_index(drop=False) 
-        self.target_cols = [col for col in self.dataset.columns if col.startswith("stat_")]
+        self.target_cols = target_cols
         self.is_train = is_train
         self.transforms = T.Compose([
             T.RandomHorizontalFlip(p=0.5),
@@ -27,7 +27,7 @@ class RadiomicDataset(Dataset):
         
         x = torch.load(tensor_path)
         # Normalizing HU values
-        HU_MIN, HU_MAX = -150.0, 250.0
+        HU_MIN, HU_MAX = -250.0, 500.0
         x[:3] = torch.clamp(x[:3], HU_MIN, HU_MAX)
         x[:3] = (x[:3] - HU_MIN) / (HU_MAX - HU_MIN) # min max normalization for training
         if self.is_train:

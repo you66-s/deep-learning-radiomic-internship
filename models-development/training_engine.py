@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import RobustScaler
+from sklearn.preprocessing import PowerTransformer, QuantileTransformer, RobustScaler, StandardScaler
 from sklearn.metrics import r2_score
 import wandb
 
@@ -161,69 +161,197 @@ def plot_loss_curves(results):
     plt.grid(True)
     plt.show()
     
-def apply_custom_scaling(log_features, target_cols, dataset, is_train=True, scaler=None):
-    dataset = dataset.copy()
-    dataset[log_features] = dataset[log_features].clip(lower=1e-10)
-    dataset[log_features] = np.log1p(dataset[log_features])
-    if is_train:
-        scaler = RobustScaler()
-        dataset[target_cols] = scaler.fit_transform(dataset[target_cols])
-        return dataset, scaler
-    else:
-        dataset[target_cols] = scaler.transform(dataset[target_cols])
-        return dataset
-    
-def custom_scaling_v2(dataset, target_cols, log_features, ratio_features, is_train, scaler=None):
-    df = dataset.copy()
 
-    ratio_cols = [c for c in ratio_features if c in target_cols]
-    log_cols   = [c for c in log_features   if c in target_cols]
-    rest_cols  = [c for c in target_cols if c not in ratio_cols and c not in log_cols]
+    
+def custom_scaling_v3(dataset, target_cols, is_train, scaler=None):
+    df = dataset.copy()
 
     if is_train:
         scaler = {}
-
-        # Ratio group, clip extreme outliers, then RobustScaler
-        if ratio_cols:
-            # Compute clip bounds from training data only
-            clip_bounds = {}
-            for col in ratio_cols:
-                low  = df[col].quantile(0.01)
-                high = df[col].quantile(0.99)
-                clip_bounds[col] = (low, high)
-                df[col] = df[col].clip(low, high)
+        
+        # 1. Clipping pour neutraliser les artefacts extrêmes
+        clip_bounds = {}
+        for col in target_cols:
+            low, high = df[col].quantile(0.01), df[col].quantile(0.99)
+            clip_bounds[col] = (low, high)
+            df[col] = df[col].clip(low, high)
             
-            sc = RobustScaler()
-            df[ratio_cols] = sc.fit_transform(df[ratio_cols])
-            scaler["ratio"] = (sc, ratio_cols, False, clip_bounds)  # store bounds
-
-        # Log group log1p then RobustScaler
-        if log_cols:
-            df[log_cols] = np.log1p(df[log_cols].clip(lower=0))
-            sc = RobustScaler()
-            df[log_cols] = sc.fit_transform(df[log_cols])
-            scaler["log"] = (sc, log_cols, True, None)
-
-        # Rest group — RobustScaler only
-        if rest_cols:
-            sc = RobustScaler()
-            df[rest_cols] = sc.fit_transform(df[rest_cols])
-            scaler["rest"] = (sc, rest_cols, False, None)
-
+        # 2. Yeo-Johnson pour normaliser les distributions
+        # method='yeo-johnson' gère les valeurs positives et nulles
+        pt = PowerTransformer(method='yeo-johnson', standardize=False)
+        df[target_cols] = pt.fit_transform(df[target_cols])
+        
+        # 3. RobustScaler pour le centrage final
+        sc = RobustScaler()
+        df[target_cols] = sc.fit_transform(df[target_cols])
+        
+        # On stocke tout dans un dictionnaire unique pour l'inférence
+        scaler["unified"] = (sc, target_cols, clip_bounds, pt)
         return df, scaler
 
     else:
         assert scaler is not None
-        for key, (sc, cols, do_log, clip_bounds) in scaler.items():
+        sc, cols, clip_bounds, pt = scaler["unified"]
+        valid = [c for c in cols if c in df.columns]
+        
+        # Application des mêmes bornes de clipping du train
+        for col in valid:
+            if col in clip_bounds:
+                low, high = clip_bounds[col]
+                df[col] = df[col].clip(low, high)
+        
+        # Application de la transformation de puissance apprise
+        df[valid] = pt.transform(df[valid])
+        
+        # Application du scaling robuste appris
+        df[valid] = sc.transform(df[valid])
+
+        return df, None
+
+def basic_standrdScaler_normalization(dataset, target_cols, is_train, scaler = None):
+    df = dataset.copy()
+    if is_train:
+        scaler = StandardScaler()
+        df[target_cols] = scaler.fit_transform(df[target_cols])
+        return df, scaler
+    else:
+        if scaler is None:
+            raise ValueError("Scaler not fitted ")
+        df[target_cols] = scaler.transform(df[target_cols])
+        return df
+    
+def glcm_hybrid_scaler(dataset, power_features, quantile_features, is_train=True, preprocessors=None):
+    df = dataset.copy()
+
+    if set(power_features).intersection(set(quantile_features)):
+        raise ValueError("power_features and quantile_features must not overlap")
+
+    all_cols = list(set(power_features + quantile_features))
+
+    missing_cols = [c for c in all_cols if c not in df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing columns in dataset: {missing_cols}")
+    
+    df[all_cols] = df[all_cols].replace([np.inf, -np.inf], np.nan)
+
+    if is_train:
+        medians = df[all_cols].median()
+    else:
+        if preprocessors is None:
+            raise ValueError("Preprocessors must be provided for inference")
+        medians = preprocessors["medians"]
+
+    df[all_cols] = df[all_cols].fillna(medians)
+
+    if is_train:
+        preprocessors = {}
+
+        if len(power_features) > 0:
+            pt_yeo = PowerTransformer(method='yeo-johnson')
+            scaler_power = RobustScaler()
+
+            power_data = pt_yeo.fit_transform(df[power_features])
+            df[power_features] = scaler_power.fit_transform(power_data)
+
+            preprocessors["pt_yeo"] = pt_yeo
+            preprocessors["scaler_power"] = scaler_power
+
+        if len(quantile_features) > 0:
+            qt = QuantileTransformer(output_distribution='normal', random_state=42, n_quantiles=100)
+            scaler_quantile = RobustScaler()
+
+            quantile_data = qt.fit_transform(df[quantile_features])
+            df[quantile_features] = scaler_quantile.fit_transform(quantile_data)
+
+            preprocessors["qt"] = qt
+            preprocessors["scaler_quantile"] = scaler_quantile
+
+        preprocessors["medians"] = medians
+        return df, preprocessors
+
+    else:
+        if len(power_features) > 0:
+            pt_yeo = preprocessors["pt_yeo"]
+            scaler_power = preprocessors["scaler_power"]
+
+            power_data = pt_yeo.transform(df[power_features])
+            df[power_features] = scaler_power.transform(power_data)
+
+        if len(quantile_features) > 0:
+            qt = preprocessors["qt"]
+            scaler_quantile = preprocessors["scaler_quantile"]
+
+            quantile_data = qt.transform(df[quantile_features])
+            df[quantile_features] = scaler_quantile.transform(quantile_data)
+
+        return df
+    
+def custom_scaling_v_hybrid(dataset, target_cols, is_train, scaler=None):
+    df = dataset.copy()
+    # Features with extreme spike distributions — QuantileTransformer works best
+    QUANTILE_FEATURES = ["stat_cov", "stat_qcod"]
+    POWER_FEATURES = [c for c in target_cols if c not in QUANTILE_FEATURES]
+
+    if is_train:
+        scaler = {}
+        clip_bounds = {}
+
+        # Clip outliers for ALL features
+        # More aggressive clipping for ratio features
+        for col in target_cols:
+            if col in QUANTILE_FEATURES:
+                low, high = df[col].quantile(0.02), df[col].quantile(0.98)
+            else:
+                low, high = df[col].quantile(0.01), df[col].quantile(0.99)
+            clip_bounds[col] = (low, high)
+            df[col] = df[col].clip(low, high)
+
+        # PowerTransformer (Yeo-Johnson) for normal features
+        if POWER_FEATURES:
+            pt = PowerTransformer(method='yeo-johnson', standardize=False)
+            df[POWER_FEATURES] = pt.fit_transform(df[POWER_FEATURES])
+            sc_power = RobustScaler()
+            df[POWER_FEATURES] = sc_power.fit_transform(df[POWER_FEATURES])
+            scaler["power"] = (pt, sc_power, POWER_FEATURES)
+
+        # QuantileTransformer for spike-distribution ratio features
+        if QUANTILE_FEATURES:
+            valid_q = [c for c in QUANTILE_FEATURES if c in df.columns]
+            qt = QuantileTransformer(
+                n_quantiles=1000,
+                output_distribution='normal',
+                random_state=42
+            )
+            df[valid_q] = qt.fit_transform(df[valid_q])
+            sc_quant = RobustScaler()
+            df[valid_q] = sc_quant.fit_transform(df[valid_q])
+            scaler["quantile"] = (qt, sc_quant, valid_q)
+
+        scaler["clip_bounds"] = clip_bounds
+        return df, scaler
+
+    else:
+        assert scaler is not None
+        clip_bounds = scaler["clip_bounds"]
+
+        # Apply clip bounds from training
+        for col in [c for c in target_cols if c in df.columns]:
+            if col in clip_bounds:
+                low, high = clip_bounds[col]
+                df[col] = df[col].clip(low, high)
+
+        # Apply PowerTransformer pipeline
+        if "power" in scaler:
+            pt, sc_power, cols = scaler["power"]
             valid = [c for c in cols if c in df.columns]
-            # Apply same clip bounds from training
-            if clip_bounds is not None:
-                for col in valid:
-                    if col in clip_bounds:
-                        low, high = clip_bounds[col]
-                        df[col] = df[col].clip(low, high)
-            if do_log:
-                df[valid] = np.log1p(df[valid].clip(lower=0))
-            df[valid] = sc.transform(df[valid])
+            df[valid] = pt.transform(df[valid])
+            df[valid] = sc_power.transform(df[valid])
+
+        # Apply QuantileTransformer pipeline
+        if "quantile" in scaler:
+            qt, sc_quant, cols = scaler["quantile"]
+            valid = [c for c in cols if c in df.columns]
+            df[valid] = qt.transform(df[valid])
+            df[valid] = sc_quant.transform(df[valid])
 
         return df, None

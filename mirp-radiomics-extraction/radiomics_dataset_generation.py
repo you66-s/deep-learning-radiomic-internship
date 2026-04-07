@@ -27,13 +27,13 @@ OUTPUT_FOLDER = os.path.join(BASE_PATH, "generated_dataset")
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 # MIRP Settings
-feature_settings = FeatureExtractionSettingsClass(base_feature_families="statistical")
+feature_settings = FeatureExtractionSettingsClass(base_feature_families="glcm", base_discretisation_method="fixed_bin_number", base_discretisation_n_bins=16)
 general_settings = GeneralSettingsClass()
 settings = SettingsClass(general_settings=general_settings, feature_extr_settings=feature_settings)
 
 # Radiomics Feature Extraction
-def radiomics_features_extraction(image_path: str, mask_path: str, bins_num: int = 16, normalisation_method: str = "standardisation", resample_dim: float | tuple = 1.0):
-
+def radiomics_features_extraction(image_path: str, mask_path: str, bins_num: int = 16, normalisation_method: str = "none", resample_dim: float | tuple = 1.0):
+    MIN_VOXELS_FOR_TEXTURE = 25
     img = nib.load(image_path, mmap='r')
     img_data = np.asarray(img.dataobj, dtype=np.float32)
 
@@ -76,12 +76,11 @@ def radiomics_features_extraction(image_path: str, mask_path: str, bins_num: int
     img_2d = img_data[z_middle, :, :]
     mask_2d = mask_data[z_middle, :, :]
 
-    # Safety check (rare but important)
-    if np.sum(mask_2d) == 0:
-        logger.warning(f"Empty slice after selection: {mask_path}")
+    if np.sum(mask_2d) < MIN_VOXELS_FOR_TEXTURE:
+        logger.warning(f"Mask too small for texture features ({np.sum(mask_2d)} voxels): {mask_path}")
         return None
     
-    img_2d = np.expand_dims(img_2d, axis=0)  # shape becomes (1, H, W)
+    img_2d = np.expand_dims(img_2d, axis=0)  
     mask_2d = np.expand_dims(mask_2d, axis=0)
     
     feature_data = extract_features(
@@ -89,8 +88,6 @@ def radiomics_features_extraction(image_path: str, mask_path: str, bins_num: int
         mask=mask_2d,
         new_spacing=resample_dim,
         intensity_normalisation=normalisation_method,
-        base_discretisation_method="fixed_bin_number",
-        base_discretisation_n_bins=bins_num,
         settings=settings,
         by_slice=False
     )
@@ -104,8 +101,8 @@ patients = os.listdir(PATIENTS_FOLDER_BASE_PATH)
 targets = {"pancreas.nii.gz", "pancreas_body.nii.gz", "pancreas_head.nii.gz", 
            "pancreas_tail.nii.gz", "pancreatic_duct.nii.gz", "pancreatic_lesion.nii.gz"}
 
-with ProcessPoolExecutor(max_workers=1) as executor:
-    for patient in tqdm(patients[:1], desc="Patients"):
+with ProcessPoolExecutor(max_workers=12) as executor:
+    for patient in tqdm(patients, desc="Patients"):
         patient_id = patient.split("_")[1]
         patient_csv = os.path.join(OUTPUT_FOLDER, f"{patient_id}_radiomics_features.csv")
         # Skip if already processed
@@ -179,4 +176,4 @@ with ProcessPoolExecutor(max_workers=1) as executor:
 
 files = glob.glob(os.path.join(OUTPUT_FOLDER, "*.csv"))
 df = pd.concat((pd.read_csv(f) for f in files), ignore_index=True)
-df.to_csv("data/2d_full_radiomics_dataset.csv", index=False)
+df.to_csv("data/2d_texture_radiomics_dataset.csv", index=False)

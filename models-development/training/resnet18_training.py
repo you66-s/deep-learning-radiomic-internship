@@ -10,11 +10,11 @@ from torchvision import transforms as T
 from architectures.resnet18 import ResNet18, WeightedHuberLoss
 import torch.nn as nn
 import torch.optim as optim
-from training_engine import evaluate_and_plot, train_model, plot_loss_curves, custom_scaling_v2
+from training_engine import evaluate_and_plot, train_model, plot_loss_curves, custom_scaling_v_hybrid
 import numpy as np
 
 # Hyperparameters
-LR = 2e-4
+LR = 1e-4
 WEIGHT_DECAY = 1e-3
 EPOCHS = 80
 TRAIN_BATCH_SIZE = 128
@@ -23,8 +23,8 @@ RANDOM_SEED = 42
 np.random.seed(RANDOM_SEED)
 torch.manual_seed(RANDOM_SEED)
 # W&B parameters
-RUN_NAME = f"resnet18-wider-hu-window-{EPOCHS}ep"
-RUN_DESCRIPTION = "Wider HU window [-200, 500] and stat_max moved to LOG_FEATURES group."   
+RUN_NAME = f"resnet18-hybrid-scaling-{EPOCHS}ep"
+RUN_DESCRIPTION = "PowerTransformer (Yeo-Johnson) + RobustScaler for 15 normal features, QuantileTransformer (normal output) + RobustScaler for stat_cov and stat_qcod. Outlier clipping at p1/p99 for normal features and p2/p98 for ratio features"   
 CONFIG = {
         "learning_rate": LR,
         "weight_decay": WEIGHT_DECAY,
@@ -66,9 +66,9 @@ test_df  = test_df.drop(labels=cols_to_drop, axis=1)
 RATIO_FEATURES = ["stat_qcod", "stat_cov", "stat_skew", "stat_kurt"]
 LOG_FEATURES   = ["stat_energy", "stat_var", "stat_range", "stat_iqr", "stat_mad", "stat_max"]
 
-train_df, scaler = custom_scaling_v2(train_df, target_cols, LOG_FEATURES, RATIO_FEATURES, is_train=True)
-val_df,  _       = custom_scaling_v2(val_df,   target_cols, LOG_FEATURES, RATIO_FEATURES, is_train=False, scaler=scaler)
-test_df, _       = custom_scaling_v2(test_df,  target_cols, LOG_FEATURES, RATIO_FEATURES, is_train=False, scaler=scaler)
+train_df, scaler = custom_scaling_v_hybrid(train_df, target_cols, is_train=True)
+val_df,  _       = custom_scaling_v_hybrid(val_df,   target_cols, is_train=False, scaler=scaler)
+test_df, _       = custom_scaling_v_hybrid(test_df,  target_cols, is_train=False, scaler=scaler)
 
 tensor_path = "data/processed_tensors/128x128_5_slices"
 train_dataset = RadiomicDataset(dataset=train_df, tensor_dir=tensor_path, is_train=True)
@@ -90,7 +90,7 @@ optimizer = optim.Adam(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
 scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=EPOCHS, eta_min=1e-6)
 
 wandb.init(
-    project="Encov-Internship",
+    project="GLCM-Expriments",
     name=RUN_NAME,
     config=CONFIG
 )

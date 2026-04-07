@@ -113,7 +113,7 @@ def preprocess_dataset(csv_path, num_workers=12):
 
     with mp.Pool(processes=num_workers) as pool:
         results = list(tqdm(
-            pool.imap_unordered(process_one, args_list, chunksize=32),
+            pool.imap_unordered(process_one, args_list, chunksize=256),
             total=len(args_list),
             desc="Preprocessing"
         ))
