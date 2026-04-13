@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 logger = logging.getLogger(__name__)
 
 TARGET_SHAPE = (128, 128) 
-CACHE_DIR = f"data/processed_tensors/{TARGET_SHAPE[0]}x{TARGET_SHAPE[1]}_5_slices"      # data/processed_tensors/128x128_5_slices
+CACHE_DIR = f"data/processed_tensors/{TARGET_SHAPE[0]}x{TARGET_SHAPE[1]}_1_slice" 
 MARGIN = 10
 
 def pad_volume(volume, target_shape):
@@ -37,59 +37,53 @@ def pad_volume(volume, target_shape):
 def process_one(args):
     idx, row, cache_dir, target_shape = args
     cache_dir = Path(cache_dir)
-    out_path = cache_dir / f"sample_{idx}.pt"
+    out_path  = cache_dir / f"sample_{idx}.pt"
 
     if out_path.exists():
         return idx, "skipped"
 
     try:
-        ct_data  = nib.load(row["ct_image_path"]).get_fdata(dtype=np.float32)
+        ct_data   = nib.load(row["ct_image_path"]).get_fdata(dtype=np.float32)
         mask_data = nib.load(row["mask_path"]).get_fdata(dtype=np.float32)
         mask_data = (mask_data > 0).astype(np.float32)
 
         if ct_data.shape != mask_data.shape:
             return idx, f"shape mismatch {ct_data.shape} vs {mask_data.shape}"
 
+        z_middle_global = int(row["z_middle_global"])
+
+        if z_middle_global < 0 or z_middle_global >= ct_data.shape[0]:
+            return idx, f"z_middle_global={z_middle_global} out of bounds for shape {ct_data.shape}"
+
+        # Compute 3D bounding box from full mask — same crop as radiomics_dataset_generation.py
         coords = np.where(mask_data > 0)
         if coords[0].size == 0:
             return idx, "empty mask"
 
-        zmin = max(coords[0].min() - MARGIN, 0)
-        zmax = min(coords[0].max() + MARGIN, mask_data.shape[0])
-        ymin = max(coords[1].min() - MARGIN, 0)
-        ymax = min(coords[1].max() + MARGIN, mask_data.shape[1])
-        xmin = max(coords[2].min() - MARGIN, 0)
-        xmax = min(coords[2].max() + MARGIN, mask_data.shape[2])
+        margin = 10
+        ymin = max(coords[1].min() - margin, 0)
+        ymax = min(coords[1].max() + margin, mask_data.shape[1])
+        xmin = max(coords[2].min() - margin, 0)
+        xmax = min(coords[2].max() + margin, mask_data.shape[2])
 
-        ct_data   = ct_data[zmin:zmax, ymin:ymax, xmin:xmax]
-        mask_data = mask_data[zmin:zmax, ymin:ymax, xmin:xmax]
+        # Extract the exact same 2D crop MIRP received during feature extraction
+        ct_slice   = ct_data[z_middle_global, ymin:ymax, xmin:xmax]
+        mask_slice = mask_data[z_middle_global, ymin:ymax, xmin:xmax]
 
-        coords = np.where(mask_data > 0)
-        zmin_local, zmax_local = coords[0].min(), coords[0].max()
-        z_middle = (zmin_local + zmax_local) // 2
-        
-        # Extract 3 contiguous slices
-        z_indices = [z_middle - 1, z_middle, z_middle + 1]
-        z_indices = [np.clip(z, 0, ct_data.shape[0] - 1) for z in z_indices]    # clip to handle cases where the ROI is only 1 or 2 slices thick
-
-        # Extract same slice as radiomics
-        ct_slice = ct_data[z_indices, :, :]
-        mask_slice = mask_data[z_indices, :, :]
-
-        if np.sum(mask_slice[1]) == 0:
-            logger.warning(f"Empty slice after selection")
+        if np.sum(mask_slice) == 0:
             return idx, "empty slice"
-        
-        
-        # Stack channels → (C, H, W)
-        x = np.concatenate([ct_slice, mask_slice], axis=0)
-        # Add fake depth dimension for padding function
-        x = np.expand_dims(x, axis=1)  # (C, 1, H, W)
-        # Pad
-        x = pad_volume(x, target_shape)
 
-        # Remove depth dimension
-        x = x[:, 0, :, :]
+        # Add channel dimension → (1, H, W)
+        ct_slice   = ct_slice[np.newaxis, :, :]
+        mask_slice = mask_slice[np.newaxis, :, :]
+
+        # Stack → (2, H, W)
+        x = np.concatenate([ct_slice, mask_slice], axis=0)
+
+        # Pad or crop to target shape using pad_volume
+        x = np.expand_dims(x, axis=1)   # (2, 1, H, W)
+        x = pad_volume(x, target_shape)  # (2, 1, 128, 128)
+        x = x[:, 0, :, :]               # (2, 128, 128)
 
         torch.save(torch.tensor(x, dtype=torch.float32), out_path)
         return idx, "ok"
@@ -136,4 +130,4 @@ def preprocess_dataset(csv_path, num_workers=12):
 
 
 if __name__ == "__main__":
-    preprocess_dataset("data/processed_dataset/final_2d_cleaned_dataset.csv")
+    preprocess_dataset("data/processed_dataset/2d_1_slice_texture_radiomics_dataset_clean.csv")

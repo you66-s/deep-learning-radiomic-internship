@@ -6,6 +6,8 @@ images-generation/models
 images-generation/results
 images-generation/training_results
 mirp-radiomics-extraction/cleaning_generated_dataset.ipynb
+models-development/saved-models
+artifacts
 */__pycache__
 mlruns
 mlflow.db
@@ -13,3 +15,5 @@ mlflow.db
 .idea/
 .env
 wandb
+models-development/test.ipynb
+models-development/architectures/__pycache__/resnet18.cpython-311.pyc

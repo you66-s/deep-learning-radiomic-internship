@@ -27,74 +27,76 @@ OUTPUT_FOLDER = os.path.join(BASE_PATH, "generated_dataset")
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 # MIRP Settings
-feature_settings = FeatureExtractionSettingsClass(base_feature_families="glcm", base_discretisation_method="fixed_bin_number", base_discretisation_n_bins=16)
+feature_settings = FeatureExtractionSettingsClass(
+    base_feature_families="glcm", base_discretisation_method="fixed_bin_number", base_discretisation_n_bins=16,
+    glcm_spatial_method="2d_average", by_slice=True
+)
 general_settings = GeneralSettingsClass()
 settings = SettingsClass(general_settings=general_settings, feature_extr_settings=feature_settings)
 
 # Radiomics Feature Extraction
 def radiomics_features_extraction(image_path: str, mask_path: str, bins_num: int = 16, normalisation_method: str = "none", resample_dim: float | tuple = 1.0):
     MIN_VOXELS_FOR_TEXTURE = 25
+
     img = nib.load(image_path, mmap='r')
     img_data = np.asarray(img.dataobj, dtype=np.float32)
 
     mask = nib.load(mask_path)
     mask_data = np.asarray(mask.dataobj, dtype=np.int8)
     mask_data[mask_data > 0] = 1
-    
+
     if mask_data.sum() == 0:
         logger.warning(f"Empty mask detected: {mask_path}")
-        return None
-    
-    print("Mask voxels before:", np.sum(mask_data))
-    
-    # cropping to reduce the ct and mask images to reduce memory usage
+        return None, None
+
+    # Crop to bounding box to reduce memory usage
     coords = np.where(mask_data > 0)
     zmin, zmax = coords[0].min(), coords[0].max()
     ymin, ymax = coords[1].min(), coords[1].max()
     xmin, xmax = coords[2].min(), coords[2].max()
 
-    margin = 10  # safety margin
+    margin = 10
+    zmin_crop = max(zmin - margin, 0)
+    ymin_crop = max(ymin - margin, 0)
+    xmin_crop = max(xmin - margin, 0)
+    zmax_crop = min(zmax + margin, mask_data.shape[0])
+    ymax_crop = min(ymax + margin, mask_data.shape[1])
+    xmax_crop = min(xmax + margin, mask_data.shape[2])
 
-    zmin = max(zmin - margin, 0)
-    ymin = max(ymin - margin, 0)
-    xmin = max(xmin - margin, 0)
+    # Save zmin_crop to convert local z_middle back to global coordinates
+    zmin_original = zmin_crop
 
-    zmax = min(zmax + margin, mask_data.shape[0])
-    ymax = min(ymax + margin, mask_data.shape[1])
-    xmax = min(xmax + margin, mask_data.shape[2])
-    img_data = img_data[zmin:zmax, ymin:ymax, xmin:xmax]
-    mask_data = mask_data[zmin:zmax, ymin:ymax, xmin:xmax]
-    
-    print("Mask voxels after cropping:", np.sum(mask_data))
-    
+    img_data  = img_data[zmin_crop:zmax_crop, ymin_crop:ymax_crop, xmin_crop:xmax_crop]
+    mask_data = mask_data[zmin_crop:zmax_crop, ymin_crop:ymax_crop, xmin_crop:xmax_crop]
+
+    # Recompute coords in local cropped space
     coords = np.where(mask_data > 0)
-    zmin, zmax = coords[0].min(), coords[0].max()
-    z_middle = (zmin + zmax) // 2
-    print(f"Selected middle slice: {z_middle}")
+    zmin_local, zmax_local = coords[0].min(), coords[0].max()
+    z_middle_local  = (zmin_local + zmax_local) // 2
+    z_middle_global = zmin_original + z_middle_local
 
     # Extract 2D slice
-    img_2d = img_data[z_middle, :, :]
-    mask_2d = mask_data[z_middle, :, :]
+    img_2d  = img_data[z_middle_local, :, :]
+    mask_2d = mask_data[z_middle_local, :, :]
 
     if np.sum(mask_2d) < MIN_VOXELS_FOR_TEXTURE:
         logger.warning(f"Mask too small for texture features ({np.sum(mask_2d)} voxels): {mask_path}")
-        return None
-    
-    img_2d = np.expand_dims(img_2d, axis=0)  
-    mask_2d = np.expand_dims(mask_2d, axis=0)
-    
+        return None, None
+
+    resample_dim = (1.0, 1.0)
     feature_data = extract_features(
         image=img_2d,
         mask=mask_2d,
         new_spacing=resample_dim,
         intensity_normalisation=normalisation_method,
         settings=settings,
-        by_slice=False
+        by_slice=True
     )
 
     del img, mask, img_data, mask_data
     gc.collect()
-    return feature_data
+
+    return feature_data, z_middle_global
 
 # Dataset Generation Pipeline
 patients = os.listdir(PATIENTS_FOLDER_BASE_PATH)
@@ -125,7 +127,7 @@ with ProcessPoolExecutor(max_workers=12) as executor:
                 segmentation_mask_path = os.path.join(segmentation_full_path, organ)
                 organ_label = organ.split(".")[0]
                 try:
-                    feature_data_extracted = radiomics_features_extraction(patient_image_path, segmentation_mask_path)
+                    feature_data_extracted, z_slice = radiomics_features_extraction(patient_image_path, segmentation_mask_path)
                 except Exception as e:
                         print(f"Real mask processing failed for patient {patient_id}: {e}")
                         continue
@@ -134,6 +136,7 @@ with ProcessPoolExecutor(max_workers=12) as executor:
                     continue
                 
                 for df in feature_data_extracted:
+                    df["z_middle_global"] = z_slice
                     df["patient_id"] = patient_id
                     df["organ"] = organ_label
                     df["is_augmented"] = 0
@@ -153,7 +156,7 @@ with ProcessPoolExecutor(max_workers=12) as executor:
                 organ_label = organ.split(".")[0]
 
                 try:
-                    feature_data_extracted = radiomics_features_extraction(patient_image_path, augmented_segmentation_mask_path)
+                    feature_data_extracted , z_slice = radiomics_features_extraction(patient_image_path, augmented_segmentation_mask_path)
                 except Exception as e:
                         logger.warning(f"Augmented mask processing failed for patient {patient_id}: {e}")
                         continue
@@ -161,6 +164,7 @@ with ProcessPoolExecutor(max_workers=12) as executor:
                 if feature_data_extracted is None:
                     continue
                 for df in feature_data_extracted:
+                    df["z_middle_global"] = z_slice
                     df["patient_id"] = patient_id
                     df["organ"] = organ_label
                     df["is_augmented"] = 1
@@ -176,4 +180,4 @@ with ProcessPoolExecutor(max_workers=12) as executor:
 
 files = glob.glob(os.path.join(OUTPUT_FOLDER, "*.csv"))
 df = pd.concat((pd.read_csv(f) for f in files), ignore_index=True)
-df.to_csv("data/2d_texture_radiomics_dataset.csv", index=False)
+df.to_csv("data/2d_1_slice_texture_radiomics_dataset.csv", index=False)

@@ -226,7 +226,7 @@ def glcm_hybrid_scaler(dataset, power_features, quantile_features, is_train=True
     if set(power_features).intersection(set(quantile_features)):
         raise ValueError("power_features and quantile_features must not overlap")
 
-    all_cols = list(set(power_features + quantile_features))
+    all_cols = power_features + quantile_features
 
     missing_cols = [c for c in all_cols if c not in df.columns]
     if missing_cols:
@@ -248,7 +248,7 @@ def glcm_hybrid_scaler(dataset, power_features, quantile_features, is_train=True
 
         if len(power_features) > 0:
             pt_yeo = PowerTransformer(method='yeo-johnson')
-            scaler_power = RobustScaler()
+            scaler_power = StandardScaler()
 
             power_data = pt_yeo.fit_transform(df[power_features])
             df[power_features] = scaler_power.fit_transform(power_data)
@@ -257,8 +257,8 @@ def glcm_hybrid_scaler(dataset, power_features, quantile_features, is_train=True
             preprocessors["scaler_power"] = scaler_power
 
         if len(quantile_features) > 0:
-            qt = QuantileTransformer(output_distribution='normal', random_state=42, n_quantiles=100)
-            scaler_quantile = RobustScaler()
+            qt = QuantileTransformer(output_distribution='normal', random_state=42, n_quantiles=min(len(dataset), 100))
+            scaler_quantile = StandardScaler()
 
             quantile_data = qt.fit_transform(df[quantile_features])
             df[quantile_features] = scaler_quantile.fit_transform(quantile_data)
@@ -284,7 +284,40 @@ def glcm_hybrid_scaler(dataset, power_features, quantile_features, is_train=True
             quantile_data = qt.transform(df[quantile_features])
             df[quantile_features] = scaler_quantile.transform(quantile_data)
 
-        return df
+        return df, None
+
+
+from sklearn.preprocessing import PowerTransformer, RobustScaler
+
+def glcm_power_robust_scale(train_df, val_df, test_df, target_cols):
+    clip_bounds = {}
+
+    # 1. Clip outliers using train statistics only
+    for col in target_cols:
+        low = train_df[col].quantile(0.01)
+        high = train_df[col].quantile(0.99)
+
+        clip_bounds[col] = (low, high)
+
+        train_df[col] = train_df[col].clip(low, high)
+        val_df[col]   = val_df[col].clip(low, high)
+        test_df[col]  = test_df[col].clip(low, high)
+
+    # 2. Power Transform (Yeo-Johnson handles negatives)
+    power_transformer = PowerTransformer(method='yeo-johnson')
+
+    train_df[target_cols] = power_transformer.fit_transform(train_df[target_cols])
+    val_df[target_cols]   = power_transformer.transform(val_df[target_cols])
+    test_df[target_cols]  = power_transformer.transform(test_df[target_cols])
+
+    # 3. Robust Scaling
+    scaler = RobustScaler(quantile_range=(5.0, 95.0))
+
+    train_df[target_cols] = scaler.fit_transform(train_df[target_cols])
+    val_df[target_cols]   = scaler.transform(val_df[target_cols])
+    test_df[target_cols]  = scaler.transform(test_df[target_cols])
+
+    return train_df, val_df, test_df, power_transformer, scaler
     
 def custom_scaling_v_hybrid(dataset, target_cols, is_train, scaler=None):
     df = dataset.copy()

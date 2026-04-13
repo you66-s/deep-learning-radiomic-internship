@@ -51,15 +51,3 @@ class ResNet18(nn.Module):
     def forward(self, x):
         features = self.backbone(x)
         return self.regressor(features)
-
-
-class WeightedHuberLoss(nn.Module):
-    def __init__(self, weights: torch.Tensor, delta: float = 1.0):
-        super().__init__()
-        self.register_buffer('weights', weights)
-        self.delta = delta
-
-    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        loss = nn.functional.huber_loss(pred, target, reduction="none", delta=self.delta)
-        weighted_loss = loss * self.weights
-        return weighted_loss.mean()
