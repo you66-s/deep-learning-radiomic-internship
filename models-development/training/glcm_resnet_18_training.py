@@ -1,4 +1,4 @@
-import wandb, sys, os 
+import wandb, sys, os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import torch, logging
 import pandas as pd
@@ -9,21 +9,23 @@ from torchvision import transforms as T
 from architectures.resnet18 import ResNet18
 import torch.nn as nn
 import torch.optim as optim
-from training_engine import evaluate_and_plot, glcm_power_robust_scale, train_model, plot_loss_curves, glcm_hybrid_scaler
+from training_engine import evaluate_and_plot, train_model, plot_loss_curves, glcm_hybrid_scaler
 import numpy as np
+from helpers import check_tensor_integrity
 
 # Hyperparameters
+tensor_path   = "data/processed_tensors/GLCM/224x224_scaled"
 LR = 1e-4
 WEIGHT_DECAY = 1e-2
-EPOCHS = 20
+EPOCHS = 25
 TRAIN_BATCH_SIZE = 64
 VAL_BATCH_SIZE = 64
 RANDOM_SEED = 42
 np.random.seed(RANDOM_SEED)
 torch.manual_seed(RANDOM_SEED)
 # W&B parameters
-RUN_NAME = f"RESNET-18-bg-masked-{EPOCHS}ep"
-RUN_DESCRIPTION = "Applied element-wise multiplication between CT patch and binary mask in the RadiomicDataset to eliminate background tissue leakage."   
+RUN_NAME = f"RESNET-18-hybrid-transformation-v2-{EPOCHS}ep"
+RUN_DESCRIPTION = "Applied a hybrid transformation with Robust Scaler with quantile number augmentation"   
 CONFIG = {
         "learning_rate": LR,
         "weight_decay": WEIGHT_DECAY,
@@ -62,26 +64,31 @@ train_df["original_idx"] = train_df.index
 val_df["original_idx"]   = val_df.index
 test_df["original_idx"]  = test_df.index
 
+logger.info("--- Tensor Alignment Check ---")
+check_tensor_integrity(train_df, tensor_path, "TRAIN")
+check_tensor_integrity(val_df, tensor_path, "VAL")
+check_tensor_integrity(test_df, tensor_path, "TEST")
+
 cols_to_drop = ['patient_id', 'mask_path', 'ct_image_path']
 train_df = train_df.drop(labels=cols_to_drop, axis=1)
 val_df   = val_df.drop(labels=cols_to_drop, axis=1)
 test_df  = test_df.drop(labels=cols_to_drop, axis=1)
 
 POWER_FEATURES = [
-    'cm_joint_avg_d1_2d_avg_fbn_n16',
-    'cm_joint_entr_d1_2d_avg_fbn_n16',
     'cm_diff_avg_d1_2d_avg_fbn_n16',
     'cm_diff_entr_d1_2d_avg_fbn_n16',
-    'cm_sum_avg_d1_2d_avg_fbn_n16',
-    'cm_sum_entr_d1_2d_avg_fbn_n16',
     'cm_inv_diff_d1_2d_avg_fbn_n16',
     'cm_inv_diff_norm_d1_2d_avg_fbn_n16',
     'cm_inv_diff_mom_d1_2d_avg_fbn_n16',
     'cm_inv_diff_mom_norm_d1_2d_avg_fbn_n16',
-    'cm_inv_var_d1_2d_avg_fbn_n16',
-    'cm_auto_corr_d1_2d_avg_fbn_n16'
 ]
 QUANTILE_FEATURES = [
+    'cm_joint_entr_d1_2d_avg_fbn_n16',
+    'cm_joint_avg_d1_2d_avg_fbn_n16',
+    'cm_auto_corr_d1_2d_avg_fbn_n16',
+    'cm_sum_avg_d1_2d_avg_fbn_n16',
+    'cm_inv_var_d1_2d_avg_fbn_n16',
+    'cm_sum_entr_d1_2d_avg_fbn_n16',
     'cm_joint_max_d1_2d_avg_fbn_n16',
     'cm_joint_var_d1_2d_avg_fbn_n16',
     'cm_diff_var_d1_2d_avg_fbn_n16',
@@ -97,11 +104,10 @@ QUANTILE_FEATURES = [
     'cm_info_corr2_d1_2d_avg_fbn_n16'
 ]
 
-#train_df, preprocessors     = glcm_hybrid_scaler(train_df, power_features=POWER_FEATURES, quantile_features=QUANTILE_FEATURES, is_train=True)
-#val_df,  _                  = glcm_hybrid_scaler(val_df,   power_features=POWER_FEATURES, quantile_features=QUANTILE_FEATURES, is_train=False, preprocessors=preprocessors)
-#test_df, _                  = glcm_hybrid_scaler(test_df,  power_features=POWER_FEATURES, quantile_features=QUANTILE_FEATURES, is_train=False, preprocessors=preprocessors)
-train_df, val_df, test_df, power_transformer, scaler = glcm_power_robust_scale(train_df=train_df, val_df=val_df, test_df=test_df, target_cols=target_cols)
-tensor_path   = "data/processed_tensors/128x128_1_slice"
+train_df, preprocessors = glcm_hybrid_scaler(dataset=train_df, power_features=POWER_FEATURES, quantile_features=QUANTILE_FEATURES, is_train=True)
+val_df, _               = glcm_hybrid_scaler(dataset=val_df, power_features=POWER_FEATURES, quantile_features=QUANTILE_FEATURES, is_train=False, preprocessors=preprocessors)
+test_df, _              = glcm_hybrid_scaler(dataset=test_df, power_features=POWER_FEATURES, quantile_features=QUANTILE_FEATURES, is_train=False, preprocessors=preprocessors)
+
 train_dataset = RadiomicDataset(dataset=train_df, tensor_dir=tensor_path, target_cols=target_cols, is_train=True)
 val_dataset   = RadiomicDataset(dataset=val_df,   tensor_dir=tensor_path, target_cols=target_cols, is_train=False)
 test_dataset  = RadiomicDataset(dataset=test_df,  tensor_dir=tensor_path, target_cols=target_cols, is_train=False)
@@ -114,6 +120,7 @@ logger.info(f"Dataloaders ready: Train={len(train_ids)} pts, Val={len(val_ids)} 
 num_radiomic_features = len([c for c in dataset.columns if c.startswith("cm_")])
 
 model = ResNet18(num_outputs=num_radiomic_features, in_channels=2)
+
 
 loss_fn = nn.HuberLoss()
 
