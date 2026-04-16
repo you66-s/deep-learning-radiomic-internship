@@ -28,8 +28,8 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 # MIRP Settings
 feature_settings = FeatureExtractionSettingsClass(
-    base_feature_families="glcm", base_discretisation_method="fixed_bin_number", base_discretisation_n_bins=16,
-    glcm_spatial_method="2d_average", by_slice=True
+    base_feature_families="statistical", base_discretisation_method="fixed_bin_number", base_discretisation_n_bins=16,
+    by_slice=True
 )
 general_settings = GeneralSettingsClass()
 settings = SettingsClass(general_settings=general_settings, feature_extr_settings=feature_settings)
@@ -180,4 +180,4 @@ with ProcessPoolExecutor(max_workers=12) as executor:
 
 files = glob.glob(os.path.join(OUTPUT_FOLDER, "*.csv"))
 df = pd.concat((pd.read_csv(f) for f in files), ignore_index=True)
-df.to_csv("data/2d_1_slice_texture_radiomics_dataset.csv", index=False)
+df.to_csv("data/raw_dataset/STAT/2d_1_slice_statistical_radiomics_dataset.csv", index=False)
