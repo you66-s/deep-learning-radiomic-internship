@@ -27,7 +27,6 @@ class RadiomicDataset(Dataset):
         HU_MIN, HU_MAX = -250.0, 500.0
         x[0] = torch.clamp(x[0], HU_MIN, HU_MAX)
         x[0] = (x[0] - HU_MIN) / (HU_MAX - HU_MIN) # min max normalization for training and for ct scan only
-        x[0] = x[0] * x[1]
         y = self.dataset.iloc[index][self.target_cols].values.astype(np.float32)
 
         return x, torch.tensor(y)
