@@ -17,3 +17,5 @@ mlflow.db
 wandb
 models-development/test.ipynb
 models-development/architectures/__pycache__/resnet18.cpython-311.pyc
+models-development/test.ipynb
+mirp-radiomics-extraction/radiomics_extraction.ipynb
