@@ -30,7 +30,6 @@ def train_one_epoch(model: torch.nn.Module, dataloader: torch.utils.data.DataLoa
     avg_loss = total_loss / len(dataloader)
     return avg_loss
 
-
 def evaluate(model: torch.nn.Module, dataloader: torch.utils.data.DataLoader, loss_fn: torch.nn.Module, device: torch.device) -> float:
 
     model.eval()
@@ -45,7 +44,6 @@ def evaluate(model: torch.nn.Module, dataloader: torch.utils.data.DataLoader, lo
 
     avg_loss = total_loss / len(dataloader)
     return avg_loss
-
 
 def train_model(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, val_loader: torch.utils.data.DataLoader, optimizer: torch.optim.Optimizer, loss_fn: torch.nn.Module, epochs: int, device: torch.device, scheduler=None) -> Dict[str, List[float]]:
 
@@ -161,8 +159,6 @@ def plot_loss_curves(results):
     plt.grid(True)
     plt.show()
     
-
-    
 def custom_scaling_v3(dataset, target_cols, is_train, scaler=None):
     df = dataset.copy()
 
@@ -248,7 +244,7 @@ def glcm_hybrid_scaler(dataset, power_features, quantile_features, is_train=True
 
         if len(power_features) > 0:
             pt_yeo = PowerTransformer(method='yeo-johnson')
-            scaler_power = StandardScaler()
+            scaler_power = RobustScaler()
 
             power_data = pt_yeo.fit_transform(df[power_features])
             df[power_features] = scaler_power.fit_transform(power_data)
@@ -257,8 +253,8 @@ def glcm_hybrid_scaler(dataset, power_features, quantile_features, is_train=True
             preprocessors["scaler_power"] = scaler_power
 
         if len(quantile_features) > 0:
-            qt = QuantileTransformer(output_distribution='normal', random_state=42, n_quantiles=min(len(dataset), 100))
-            scaler_quantile = StandardScaler()
+            qt = QuantileTransformer(output_distribution='normal', random_state=42, n_quantiles=min(len(dataset), 1000))
+            scaler_quantile = RobustScaler()
 
             quantile_data = qt.fit_transform(df[quantile_features])
             df[quantile_features] = scaler_quantile.fit_transform(quantile_data)
@@ -285,9 +281,6 @@ def glcm_hybrid_scaler(dataset, power_features, quantile_features, is_train=True
             df[quantile_features] = scaler_quantile.transform(quantile_data)
 
         return df, None
-
-
-from sklearn.preprocessing import PowerTransformer, RobustScaler
 
 def glcm_power_robust_scale(train_df, val_df, test_df, target_cols):
     clip_bounds = {}
@@ -322,7 +315,7 @@ def glcm_power_robust_scale(train_df, val_df, test_df, target_cols):
 def custom_scaling_v_hybrid(dataset, target_cols, is_train, scaler=None):
     df = dataset.copy()
     # Features with extreme spike distributions — QuantileTransformer works best
-    QUANTILE_FEATURES = ["stat_cov", "stat_qcod"]
+    QUANTILE_FEATURES = ["stat_cov", "stat_qcod", "stat_skew"]
     POWER_FEATURES = [c for c in target_cols if c not in QUANTILE_FEATURES]
 
     if is_train:
@@ -331,13 +324,13 @@ def custom_scaling_v_hybrid(dataset, target_cols, is_train, scaler=None):
 
         # Clip outliers for ALL features
         # More aggressive clipping for ratio features
-        for col in target_cols:
-            if col in QUANTILE_FEATURES:
-                low, high = df[col].quantile(0.02), df[col].quantile(0.98)
-            else:
-                low, high = df[col].quantile(0.01), df[col].quantile(0.99)
-            clip_bounds[col] = (low, high)
-            df[col] = df[col].clip(low, high)
+        #for col in target_cols:
+        #    if col in QUANTILE_FEATURES:
+        #        low, high = df[col].quantile(0.02), df[col].quantile(0.98)
+        #    else:
+        #        low, high = df[col].quantile(0.01), df[col].quantile(0.99)
+        #    clip_bounds[col] = (low, high)
+        #    df[col] = df[col].clip(low, high)
 
         # PowerTransformer (Yeo-Johnson) for normal features
         if POWER_FEATURES:
@@ -368,10 +361,10 @@ def custom_scaling_v_hybrid(dataset, target_cols, is_train, scaler=None):
         clip_bounds = scaler["clip_bounds"]
 
         # Apply clip bounds from training
-        for col in [c for c in target_cols if c in df.columns]:
-            if col in clip_bounds:
-                low, high = clip_bounds[col]
-                df[col] = df[col].clip(low, high)
+        #for col in [c for c in target_cols if c in df.columns]:
+        #    if col in clip_bounds:
+        #        low, high = clip_bounds[col]
+        #        df[col] = df[col].clip(low, high)
 
         # Apply PowerTransformer pipeline
         if "power" in scaler:
