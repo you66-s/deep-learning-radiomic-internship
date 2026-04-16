@@ -42,9 +42,6 @@ class TextureCNN(nn.Module):
         )
 
     def forward(self, x):
-        masked_ct = x[:, 0:1, :, :] * x[:, 1:2, :, :]
-        x_isolated = torch.cat([masked_ct, x[:, 1:2, :, :]], dim=1)
-        
-        out = self.features(x_isolated)
+        out = self.features(x)
         out = self.flatten(out)
         return self.regressor(out)
