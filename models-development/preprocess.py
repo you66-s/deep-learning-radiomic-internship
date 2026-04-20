@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 logger = logging.getLogger(__name__)
 
 TARGET_SHAPE = (224, 224) 
-CACHE_DIR = f"data/processed_tensors/STAT/{TARGET_SHAPE[0]}x{TARGET_SHAPE[1]}_scaled" 
+CACHE_DIR = f"data/processed_tensors/GLRM/{TARGET_SHAPE[0]}x{TARGET_SHAPE[1]}_scaled" 
 MARGIN = 10
 
 def process_one(args):
@@ -82,4 +82,4 @@ def preprocess_dataset(csv_path, num_workers=12):
         pd.DataFrame(failed, columns=["idx", "reason"]).to_csv("failed_scaling.csv", index=False)
 
 if __name__ == "__main__":
-    preprocess_dataset("data/processed_dataset/STAT/2d_1_slice_statistical_radiomics_dataset_cleaned.csv")
+    preprocess_dataset("data/processed_dataset/GLRM/glrm_radiomics_dataset_cleaned.csv")
