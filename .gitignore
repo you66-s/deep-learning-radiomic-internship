@@ -19,3 +19,9 @@ models-development/test.ipynb
 models-development/architectures/__pycache__/resnet18.cpython-311.pyc
 models-development/test.ipynb
 mirp-radiomics-extraction/radiomics_extraction.ipynb
+models-development/architectures/__pycache__
+models-development/architectures/__pycache__/resnet18.cpython-311.pyc
+mirp-radiomics-extraction/universal_crop.json
+mirp-radiomics-extraction/global_scale.json
+models-development/architectures/__pycache__/resnet18.cpython-311.pyc
+mirp-radiomics-extraction/scale-factor.ipynb
